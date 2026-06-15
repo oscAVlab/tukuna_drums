@@ -59,6 +59,14 @@
   .ctl label{font-family:var(--mono);font-size:10px;letter-spacing:0.04em;text-transform:uppercase;color:var(--inkSoft)}
   .ctl input[type=range]{width:100%;accent-color:var(--turq)}
   .ctl .val{font-family:var(--mono);font-size:11px;color:var(--turqDeep);text-align:right}
+  .ctl .segsm{display:flex;border:1.5px solid var(--rule);border-radius:2px;overflow:hidden}
+  .ctl .segsm button{flex:1;font-family:var(--mono);font-size:10px;letter-spacing:0.04em;text-transform:uppercase;
+    padding:5px 0;background:var(--paper);color:var(--mute);border:none;border-right:1px solid var(--rule);cursor:pointer}
+  .ctl .segsm button:last-child{border-right:none}
+  .ctl .segsm button.on{background:var(--turq);color:var(--ink)}
+  .sect.syn>.st{background:var(--inkSoft)} .sect.syn>.st .mono{color:var(--turqSoft)}
+  .mixrow .ctl input[type=range]{height:6px}
+  .mixrow .ctl label{color:var(--turqDeep);font-weight:700}
   canvas{display:block;width:100%;background:var(--paper);border:1px solid var(--rule);border-radius:2px}
   .srcrow{display:flex;flex-wrap:wrap;gap:7px;align-items:center;margin-bottom:10px}
   .srcrow .mono{margin-left:auto}
@@ -79,7 +87,7 @@
   <header>
     <div>
       <div class="wordmark"><span class="acc">osc</span><span class="av">AV</span><span class="acc">lab</span></div>
-      <div class="tagline">drum testbench · trigger + gate / eq / comp / transient</div>
+      <div class="tagline">drum testbench · trigger + drum synth + gate / eq / comp / transient</div>
     </div>
     <div class="mono" id="env"></div>
   </header>
@@ -105,7 +113,7 @@
 
   <footer>
     <div class="mono">oscavlab · banco de pruebas → max for live → au/vst3 (rnbo)</div>
-    <p class="note" style="margin-top:8px">Aquí se afinan umbrales, key-bands, gate, EQ y transient por canal. <b>No es el signal path real</b>: en vivo y estudio el procesado va en M4L (routing multicanal por el Apollo, baja latencia, dispara Drum Racks nativo). El OH va sin gate ni trigger por defecto. Carga un clip por canal o usa entrada en vivo para probar.</p>
+    <p class="note" style="margin-top:8px">Aquí se afinan umbrales, key-bands, gate, EQ, transient y el <b>drum synth</b> por canal. Cada golpe detectado dispara la voz sintética (dos capas: tono ↔ ruido) y la mezclas con la fuente procesada vía el fader <b>fuente ↔ synth</b>. Usa <b>◈ Synth</b> para escuchar la voz aislada mientras la afinas. <b>No es el signal path real</b>: en vivo y estudio el procesado va en M4L (routing multicanal por el Apollo, baja latencia, dispara Drum Racks nativo). El OH va sin gate ni trigger por defecto.</p>
   </footer>
 </div>
 
@@ -133,6 +141,19 @@ const DEF={
     oh:{keyLo:600,keyHi:16000,detOn:0,dThr:-22,dLock:40,gateOn:0,gThr:-36,gAtk:2,gHold:40,gRel:160,gRange:-18,hpf:250,bellF:600,bellG:-1,shF:10000,shG:2,cThr:-18,cRatio:2,makeup:1,trAtk:0,trSus:0,outG:0}
   }
 };
+/* ============ defaults de drum synth por tipo ============ */
+/* dos capas: TONE (osc + sub + drive, con env de pitch) ↔ NOISE (ruido filtrado).
+   layMix = balance tono↔ruido.  mix = blend final fuente↔synth. */
+const SYN_DEF={
+  kick: {synEnable:1, oscType:0, tunePitch:52,  pEnvAmt:36, pEnvDec:55, toneDec:380, drive:25, subLvl:30, layMix:18, nFiltType:2, nFiltF:1600, nFiltQ:0.7, nDec:8,   clickLvl:30, synGain:0, mix:0},
+  snare:{synEnable:1, oscType:1, tunePitch:180, pEnvAmt:12, pEnvDec:30, toneDec:120, drive:15, subLvl:0,  layMix:62, nFiltType:1, nFiltF:2200, nFiltQ:0.8, nDec:140, clickLvl:20, synGain:0, mix:0},
+  tom:  {synEnable:1, oscType:0, tunePitch:130, pEnvAmt:20, pEnvDec:60, toneDec:260, drive:12, subLvl:12, layMix:22, nFiltType:1, nFiltF:1200, nFiltQ:0.7, nDec:30,  clickLvl:18, synGain:0, mix:0},
+  oh:   {synEnable:1, oscType:3, tunePitch:320, pEnvAmt:0,  pEnvDec:10, toneDec:40,  drive:0,  subLvl:0,  layMix:88, nFiltType:2, nFiltF:8000, nFiltQ:0.9, nDec:220, clickLvl:0,  synGain:0, mix:0}
+};
+['studio','live'].forEach(ctx=>{for(const id in SYN_DEF)Object.assign(DEF[ctx][id], SYN_DEF[id]);});
+const WAVE=['sine','triangle','sawtooth','square'];
+const NFILT=['lowpass','bandpass','highpass'];
+const SEL={oscType:['sin','tri','saw','sqr'], nFiltType:['lp','bp','hp']};
 // rango de sliders [min,max,step,unit]
 const RANGE={
   keyLo:[20,2000,5,'Hz'],keyHi:[200,18000,10,'Hz'],
@@ -140,7 +161,12 @@ const RANGE={
   gThr:[-60,-6,1,'dB'],gAtk:[0.1,20,0.1,'ms'],gHold:[5,300,5,'ms'],gRel:[20,500,5,'ms'],gRange:[-60,0,1,'dB'],
   hpf:[20,400,5,'Hz'],bellF:[60,8000,10,'Hz'],bellG:[-12,12,0.5,'dB'],shF:[2000,16000,100,'Hz'],shG:[-12,12,0.5,'dB'],
   cThr:[-40,0,1,'dB'],cRatio:[1,12,0.5,':1'],makeup:[0,18,0.5,'dB'],
-  trAtk:[-1,1,0.05,''],trSus:[-1,1,0.05,''],outG:[-24,12,0.5,'dB']
+  trAtk:[-1,1,0.05,''],trSus:[-1,1,0.05,''],outG:[-24,12,0.5,'dB'],
+  /* drum synth */
+  oscType:[0,3,1,''],tunePitch:[20,2000,1,'Hz'],pEnvAmt:[0,48,1,'st'],pEnvDec:[2,300,1,'ms'],
+  toneDec:[10,1200,5,'ms'],drive:[0,100,1,'%'],subLvl:[0,100,1,'%'],layMix:[0,100,1,'%'],
+  nFiltType:[0,2,1,''],nFiltF:[40,16000,10,'Hz'],nFiltQ:[0.1,12,0.1,''],nDec:[3,600,1,'ms'],
+  clickLvl:[0,100,1,'%'],synGain:[-24,12,0.5,'dB'],mix:[0,100,1,'%']
 };
 
 /* ============ worklet (detect + gate + transient) ============ */
@@ -215,10 +241,14 @@ async function buildChannel(c){
   st.sh=ac.createBiquadFilter();st.sh.type='highshelf';
   st.comp=ac.createDynamicsCompressor();
   st.makeup=ac.createGain();
+  st.srcBus=ac.createGain();      // fuente procesada (lado A del mix)
+  st.synthBus=ac.createGain();    // drum synth   (lado B del mix)
   st.out=ac.createGain();
   st.an=ac.createAnalyser();st.an.fftSize=512;
   st.in.connect(st.proc);st.proc.connect(st.hpf);st.hpf.connect(st.bell);st.bell.connect(st.sh);
-  st.sh.connect(st.comp);st.comp.connect(st.makeup);st.makeup.connect(st.out);st.out.connect(st.an);st.an.connect(master);
+  st.sh.connect(st.comp);st.comp.connect(st.makeup);st.makeup.connect(st.srcBus);
+  st.srcBus.connect(st.out);st.synthBus.connect(st.out);
+  st.out.connect(st.an);st.an.connect(master);
   st.proc.port.onmessage=e=>{
     const d=e.data;
     if(d.hit){fireHit(c.id,d.vel);}
@@ -238,6 +268,66 @@ function applyParams(id){
   st.comp.attack.value=0.003;st.comp.release.value=0.12;st.comp.knee.value=6;
   st.makeup.gain.setTargetAtTime(Math.pow(10,p.makeup/20),t,0.01);
   st.out.gain.setTargetAtTime(Math.pow(10,p.outG/20),t,0.01);
+  // mix fuente ↔ synth (equal power)
+  const mx=(p.mix||0)/100;
+  st.srcBus.gain.setTargetAtTime(Math.cos(mx*Math.PI/2),t,0.01);
+  st.synthBus.gain.setTargetAtTime(Math.sin(mx*Math.PI/2),t,0.01);
+}
+
+/* ============ DRUM SYNTH ============ */
+let noiseBuf=null;
+function getNoise(){if(noiseBuf)return noiseBuf;noiseBuf=ac.createBuffer(1,Math.floor(ac.sampleRate*2),ac.sampleRate);
+  const d=noiseBuf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;return noiseBuf;}
+function driveCurve(amt){const k=amt/100*60+0.1,n=256,c=new Float32Array(n);
+  for(let i=0;i<n;i++){const x=i/(n-1)*2-1;c[i]=(1+k)*x/(1+k*Math.abs(x));}return c;}
+// dispara una voz one-shot por golpe → st.synthBus
+function triggerSynth(id,vel){
+  const st=channels[id],p=st.params,t=ac.currentTime,v=Math.max(0.05,vel/127);
+  const amp=ac.createGain();amp.gain.value=v*Math.pow(10,(p.synGain||0)/20);amp.connect(st.synthBus);
+  // balance de capas TONE ↔ NOISE (equal power)
+  const lm=(p.layMix||0)/100;
+  const toneBal=ac.createGain();toneBal.gain.value=Math.cos(lm*Math.PI/2);toneBal.connect(amp);
+  const noiseBal=ac.createGain();noiseBal.gain.value=Math.sin(lm*Math.PI/2);noiseBal.connect(amp);
+  const tDec=Math.max(0.02,(p.toneDec||100)/1000), nDec=Math.max(0.005,(p.nDec||10)/1000);
+  const dur=Math.max(tDec,nDec)+0.12;
+  // --- TONE: osc con env de pitch + drive ---
+  const f0=Math.max(20,p.tunePitch||60), fPk=Math.min(18000,f0*Math.pow(2,(p.pEnvAmt||0)/12));
+  const osc=ac.createOscillator();osc.type=WAVE[p.oscType||0];
+  osc.frequency.setValueAtTime(fPk,t);
+  osc.frequency.exponentialRampToValueAtTime(f0,t+Math.max(0.005,(p.pEnvDec||10)/1000));
+  const tEnv=ac.createGain();tEnv.gain.setValueAtTime(0.0001,t);
+  tEnv.gain.exponentialRampToValueAtTime(1,t+0.002);tEnv.gain.exponentialRampToValueAtTime(0.0001,t+tDec);
+  let toneSrc=osc;
+  if(p.drive>0){const ws=ac.createWaveShaper();ws.curve=driveCurve(p.drive);osc.connect(ws);toneSrc=ws;}
+  toneSrc.connect(tEnv);tEnv.connect(toneBal);
+  osc.start(t);osc.stop(t+dur);
+  // --- SUB (octava abajo) ---
+  if(p.subLvl>0){const sub=ac.createOscillator();sub.type='sine';sub.frequency.setValueAtTime(f0/2,t);
+    const sg=ac.createGain();sg.gain.setValueAtTime(0.0001,t);sg.gain.exponentialRampToValueAtTime((p.subLvl/100),t+0.004);
+    sg.gain.exponentialRampToValueAtTime(0.0001,t+tDec*1.2);sub.connect(sg);sg.connect(toneBal);sub.start(t);sub.stop(t+dur);}
+  // --- NOISE: ruido filtrado ---
+  const nz=ac.createBufferSource();nz.buffer=getNoise();nz.loop=true;
+  const nf=ac.createBiquadFilter();nf.type=NFILT[p.nFiltType||0];
+  nf.frequency.value=Math.max(40,p.nFiltF||2000);nf.Q.value=Math.max(0.1,p.nFiltQ||0.7);
+  const nEnv=ac.createGain();nEnv.gain.setValueAtTime(1,t);nEnv.gain.exponentialRampToValueAtTime(0.0001,t+nDec);
+  nz.connect(nf);nf.connect(nEnv);nEnv.connect(noiseBal);nz.start(t);nz.stop(t+dur);
+  // --- CLICK de ataque (fuera del balance, acento de transiente) ---
+  if(p.clickLvl>0){const co=ac.createOscillator();co.type='square';co.frequency.value=Math.min(8000,f0*8+1200);
+    const cg=ac.createGain();cg.gain.setValueAtTime(p.clickLvl/100,t);cg.gain.exponentialRampToValueAtTime(0.0001,t+0.006);
+    co.connect(cg);cg.connect(amp);co.start(t);co.stop(t+0.02);}
+}
+// audición: fuerza el synth audible un instante, sin importar dónde esté el MIX
+async function testSynth(id){
+  ensureAC();const c=CH.find(x=>x.id===id);
+  if(!channels[id].built)await buildChannel(c);
+  if(ac.state==='suspended')await ac.resume();
+  const st=channels[id],now=ac.currentTime;
+  st.synthBus.gain.cancelScheduledValues(now);st.synthBus.gain.setValueAtTime(1,now);
+  triggerSynth(id,110);
+  const led=document.getElementById('led-'+id);if(led){led.classList.add('flash');setTimeout(()=>led.classList.remove('flash'),60);}
+  const vt=document.getElementById('vel-'+id);if(vt)vt.textContent='synth ◈';
+  clearTimeout(st._soloT);
+  st._soloT=setTimeout(()=>{const mx=(st.params.mix||0)/100;st.synthBus.gain.setTargetAtTime(Math.sin(mx*Math.PI/2),ac.currentTime,0.02);},900);
 }
 
 /* ============ MIDI ============ */
@@ -257,6 +347,8 @@ function refreshMidi(){
 }
 function fireHit(id,vel){
   const st=channels[id];
+  // drum synth
+  if(st.built&&st.params.synEnable)triggerSynth(id,vel);
   // LED
   const led=document.getElementById('led-'+id);if(led){led.classList.add('flash');setTimeout(()=>led.classList.remove('flash'),60);}
   const vt=document.getElementById('vel-'+id);if(vt)vt.textContent='vel '+vel;
@@ -270,7 +362,7 @@ function fireHit(id,vel){
 function buildUI(){
   const wrap=document.getElementById('strips');
   CH.forEach(c=>{
-    channels[c.id]={params:Object.assign({note:c.note},DEF.studio[c.id]),midiCh:10,built:false,buffer:null,playing:false,liveOn:false};
+    if(!channels[c.id]) channels[c.id]={params:Object.assign({note:c.note},DEF.studio[c.id]),midiCh:10,built:false,buffer:null,playing:false,liveOn:false};
     const div=document.createElement('div');div.className='strip';div.id='strip-'+c.id;
     div.innerHTML=`
       <div class="shead">
@@ -286,6 +378,7 @@ function buildUI(){
           <button class="act" data-play="${c.id}" disabled>▶</button>
           <button class="act ghost" data-loop="${c.id}">↻ Loop</button>
           <button class="act ghost" data-live="${c.id}">● Live</button>
+          <button class="act ghost" data-test="${c.id}">◈ Synth</button>
           <input type="file" data-file="${c.id}" accept="audio/*">
           <span class="mono" id="src-${c.id}">sin fuente</span>
         </div>
@@ -302,6 +395,7 @@ function buildUI(){
   document.querySelectorAll('[data-play]').forEach(b=>b.onclick=()=>togglePlay(b.dataset.play,b));
   document.querySelectorAll('[data-loop]').forEach(b=>b.onclick=()=>{b.classList.toggle('live');channels[b.dataset.loop].loop=b.classList.contains('live');});
   document.querySelectorAll('[data-live]').forEach(b=>b.onclick=()=>toggleLive(b.dataset.live,b));
+  document.querySelectorAll('[data-test]').forEach(b=>b.onclick=()=>testSynth(b.dataset.test));
 }
 
 function buildSections(c){
@@ -312,19 +406,26 @@ function buildSections(c){
     {key:'eq',  title:'EQ', en:null,    params:['hpf','bellF','bellG','shF','shG']},
     {key:'comp',title:'Comp', en:null,   params:['cThr','cRatio','makeup']},
     {key:'tr',  title:'Transient',en:null,params:['trAtk','trSus']},
+    {key:'syn', title:'Drum Synth', en:'synEnable', params:['oscType','tunePitch','pEnvAmt','pEnvDec','toneDec','drive','subLvl','layMix','nFiltType','nFiltF','nFiltQ','nDec','clickLvl','synGain']},
+    {key:'mix', title:'Mix · fuente ↔ synth', en:null, params:['mix']},
     {key:'out', title:'Salida', en:null,  params:['outG']}
   ];
   groups.forEach((g,gi)=>{
     const p=channels[c.id].params;
-    const sect=document.createElement('div');sect.className='sect';
+    const sect=document.createElement('div');sect.className='sect'+(g.key==='syn'?' syn':'')+(g.key==='mix'?' mixrow':'');
     let enHtml = g.en? `<span class="toggle ${p[g.en]?'on':''}" data-en="${c.id}|${g.en}">${p[g.en]?'on':'off'}</span>`:'';
-    sect.innerHTML=`<div class="st" data-fold="${c.id}-${g.key}"><span class="mono">${g.title}</span>${enHtml}</div><div class="sc" id="sc-${c.id}-${g.key}">${gi>2?'style':''}</div>`;
+    sect.innerHTML=`<div class="st" data-fold="${c.id}-${g.key}"><span class="mono">${g.title}</span>${enHtml}</div><div class="sc" id="sc-${c.id}-${g.key}"></div>`;
     host.appendChild(sect);
     const sc=document.getElementById('sc-'+c.id+'-'+g.key);sc.innerHTML='';
     g.params.forEach(pr=>{
-      const [mn,mx,stp,un]=RANGE[pr];
       const row=document.createElement('div');row.className='ctl';
-      row.innerHTML=`<label>${labelOf(pr)}</label><input type="range" min="${mn}" max="${mx}" step="${stp}" value="${p[pr]}" data-p="${c.id}|${pr}"><span class="val" id="v-${c.id}-${pr}">${fmt(p[pr],un)}</span>`;
+      if(SEL[pr]){
+        const opts=SEL[pr].map((o,oi)=>`<button class="${p[pr]==oi?'on':''}" data-i="${oi}">${o}</button>`).join('');
+        row.innerHTML=`<label>${labelOf(pr)}</label><div class="segsm" data-seg="${c.id}|${pr}">${opts}</div><span></span>`;
+      }else{
+        const [mn,mx,stp,un]=RANGE[pr];
+        row.innerHTML=`<label>${labelOf(pr)}</label><input type="range" min="${mn}" max="${mx}" step="${stp}" value="${p[pr]}" data-p="${c.id}|${pr}"><span class="val" id="v-${c.id}-${pr}">${fmt(p[pr],un)}</span>`;
+      }
       sc.appendChild(row);
     });
   });
@@ -333,6 +434,10 @@ function buildSections(c){
     channels[id].params[pr]=v;document.getElementById('v-'+id+'-'+pr).textContent=fmt(v,RANGE[pr][3]);
     if(channels[id].built)applyParams(id);
   });
+  host.querySelectorAll('[data-seg]').forEach(sg=>sg.querySelectorAll('button').forEach(b=>b.onclick=()=>{
+    const [id,pr]=sg.dataset.seg.split('|');channels[id].params[pr]=parseInt(b.dataset.i);
+    sg.querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');
+  }));
   host.querySelectorAll('[data-en]').forEach(t=>t.onclick=e=>{
     const [id,key]=e.target.dataset.en.split('|');const p=channels[id].params;
     p[key]=p[key]?0:1;e.target.classList.toggle('on');e.target.textContent=p[key]?'on':'off';
@@ -343,7 +448,7 @@ function buildSections(c){
     const sc=document.getElementById('sc-'+h.dataset.fold);sc.style.display=sc.style.display==='none'?'block':'none';
   });
 }
-function labelOf(p){const L={keyLo:'key lo',keyHi:'key hi',dThr:'thr',dLock:'lockout',gThr:'thr',gAtk:'atk',gHold:'hold',gRel:'rel',gRange:'range',hpf:'hpf',bellF:'bell f',bellG:'bell g',shF:'shelf f',shG:'shelf g',cThr:'thr',cRatio:'ratio',makeup:'makeup',trAtk:'attack',trSus:'sustain',outG:'gain'};return L[p]||p;}
+function labelOf(p){const L={keyLo:'key lo',keyHi:'key hi',dThr:'thr',dLock:'lockout',gThr:'thr',gAtk:'atk',gHold:'hold',gRel:'rel',gRange:'range',hpf:'hpf',bellF:'bell f',bellG:'bell g',shF:'shelf f',shG:'shelf g',cThr:'thr',cRatio:'ratio',makeup:'makeup',trAtk:'attack',trSus:'sustain',outG:'gain',oscType:'osc',tunePitch:'tune',pEnvAmt:'pitch env',pEnvDec:'p.env dec',toneDec:'tone dec',drive:'drive',subLvl:'sub',layMix:'tone↔noise',nFiltType:'n.filt',nFiltF:'n.freq',nFiltQ:'n.q',nDec:'noise dec',clickLvl:'click',synGain:'syn gain',mix:'src↔syn'};return L[p]||p;}
 function fmt(v,u){if(u==='')return v.toFixed(2);if(u===':1')return v.toFixed(1)+':1';if(Math.abs(v)>=100)return Math.round(v)+u;return (v%1?v.toFixed(1):v)+u;}
 
 /* ============ fuentes ============ */
